@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SGIS-Mascota</title>
+<style>
+:root{--bg:#f6f8fb;--card:#fff;--tx:#1b2430;--mu:#5d6b7c;--pr:#185fa5;--bd:#d7dee8;--er:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#12171d;--card:#1b222b;--tx:#e8edf3;--mu:#9aa7b6;--pr:#4a90d9;--bd:#2f3946;--er:#ff8a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px system-ui,Segoe UI,Arial,sans-serif}
+header{background:var(--pr);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0}header button{background:transparent;color:#fff;border-color:#fff}
+main{max-width:1100px;margin:0 auto;padding:16px}nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+button,select,input,textarea{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:6px;padding:7px 10px}
+button{cursor:pointer}button.p{background:var(--pr);color:#fff;border-color:var(--pr)}nav button.on{background:var(--pr);color:#fff}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:12px}
+.tw{overflow-x:auto}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}th{color:var(--mu);font-weight:600}
+form label{display:block;margin:8px 0 3px;color:var(--mu);font-size:13px}form input,form select{width:100%}
+form select[multiple]{height:110px}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:8px;display:none;max-width:90%;z-index:9}
+.k{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.k div{border:1px solid var(--bd);border-radius:8px;padding:10px}.k b{font-size:22px;color:var(--pr);display:block}
+.mu{color:var(--mu);font-size:13px}.er{color:var(--er)}.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+</style></head><body>
+<header><h1>🐾 SGIS-Mascota</h1><div id="ses"></div></header>
+<main id="app"></main><div id="toast"></div>
+<script>
+const ENT={
+clientes:{t:'Clientes',f:[['nombre','Nombre'],['telefono','Teléfono'],['direccion','Dirección'],['correo','Correo','email',1]]},
+mascotas:{t:'Mascotas',f:[['cliente_id','Cliente','ref:clientes','','cli'],['nombre','Nombre'],['especie','Especie','sel:Perro,Gato,Otro'],['raza','Raza','text',1],['edad','Edad (años)','number'],['observaciones','Observaciones médicas','text',1]]},
+servicios:{t:'Servicios',f:[['nombre','Nombre'],['tipo','Tipo','sel:Salud,Vacunación,Estética,Entrenamiento,Funerario'],['precio','Precio (COP)','number']]},
+planes:{t:'Planes',f:[['nombre','Nombre del plan'],['precio','Precio (COP)','number'],['periodicidad','Periodicidad','sel:Único,Mensual,Trimestral,Anual'],['servicio_ids','Servicios incluidos','multi:servicios']]},
+contratos:{t:'Planes contratados',f:[['cliente_id','Cliente','ref:clientes','','cli'],['plan_id','Plan','ref:planes'],['fecha','Fecha','date']]},
+personal:{t:'Personal',f:[['nombre','Nombre'],['cargo','Cargo','sel:Veterinario,Estilista,Entrenador'],['turno','Turno','sel:Mañana,Tarde']]},
+citas:{t:'Citas',f:[['mascota_id','Mascota','ref:mascotas'],['servicio_id','Servicio','ref:servicios'],['personal_id','Personal asignado','ref:personal'],['fecha','Fecha','date'],['hora','Hora','time'],['estado','Estado','sel:Programada,Atendida,Cancelada']]},
+tratamientos:{t:'Tratamientos',f:[['cita_id','Cita','ref:citas'],['descripcion','Tratamiento realizado'],['fecha','Fecha','date']]},
+quejas:{t:'Quejas y reclamos',f:[['cliente_id','Cliente','ref:clientes','','cli'],['descripcion','Descripción'],['estado','Estado','sel:Abierta,En proceso,Cerrada','','cli']]},
+usuarios:{t:'Usuarios',f:[['username','Usuario'],['password','Contraseña','password'],['rol','Rol','sel:administrador,personal,cliente'],['cliente_id','Cliente (si aplica)','ref:clientes','opt'],['personal_id','Personal (si aplica)','ref:personal','opt']]}};
+const ORDER=['citas','tratamientos','mascotas','clientes','servicios','planes','contratos','personal','quejas','usuarios'];
+let S={token:localStorage.getItem('tk'),rol:null,perms:{},tab:null,edit:null,data:{},rep:null,noti:[],reg:false};
+const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const toast=m=>{const t=$('#toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',4000)};
+async function api(path,method='GET',body){
+ const r=await fetch('/api/'+path,{method,headers:{'Content-Type':'application/json',...(S.token?{Authorization:'Bearer '+S.token}:{})},body:body?JSON.stringify(body):undefined});
+ const j=await r.json().catch(()=>({}));
+ if(r.status==401&&S.token){logout();throw new Error(j.error)}
+ if(!r.ok)throw new Error(j.error||'Error');return j}
+function logout(){localStorage.removeItem('tk');S={token:null,perms:{},data:{},reg:false};render()}
+async function boot(){
+ if(!S.token)return render();
+ try{const m=await api('me');S.rol=m.rol;S.perms=m.perms;
+  S.tab=S.tab||(m.perms.citas?'citas':Object.keys(m.perms)[0]);await load()}catch(e){}render()}
+async function load(){
+ const need=Object.keys(S.perms).filter(t=>S.perms[t].includes('r'));
+ const rs=await Promise.all(need.map(t=>api(t).catch(()=>[])));need.forEach((t,i)=>S.data[t]=rs[i]);
+ S.noti=await api('notificaciones').catch(()=>[]);
+ if(S.rol=='administrador')S.rep=await api('reportes').catch(()=>null)}
+function lab(t,id){const r=(S.data[t]||[]).find(x=>x.id==id);if(!r)return'—';
+ if(t=='citas')return lab('mascotas',r.mascota_id)+' · '+r.fecha+' '+r.hora;return r.nombre||r.username||r.descripcion}
+async function doLogin(e){e.preventDefault();
+ try{const j=await api('login','POST',{username:$('#u').value,password:$('#pw').value});S.token=j.token;localStorage.setItem('tk',j.token);S.tab=null;await boot()}
+ catch(x){$('#msg').textContent=x.message}}
+async function doReg(e){e.preventDefault();const b=Object.fromEntries(new FormData(e.target));
+ try{await api('register','POST',b);toast('Registro exitoso. Ya puede iniciar sesión.');S.reg=false;render()}catch(x){$('#msg').textContent=x.message}}
+function render(){
+ $('#ses').innerHTML=S.token&&S.rol?`${esc(S.rol)} <button onclick="logout()">Salir</button>`:'';
+ if(!S.token||!S.rol){
+  $('#app').innerHTML=S.reg?`<div class="card" style="max-width:420px;margin:24px auto"><h2>Registro de cliente</h2><form onsubmit="doReg(event)"><label>Nombre completo</label><input name="nombre" required><label>Teléfono</label><input name="telefono" required><label>Dirección</label><input name="direccion" required><label>Correo</label><input name="correo" type="email"><label>Usuario</label><input name="username" required><label>Contraseña (mín. 6)</label><input name="password" type="password" minlength="6" required><p class="er" id="msg"></p><button class="p">Crear cuenta</button> <button type="button" onclick="S.reg=false;render()">Volver</button></form></div>`
+  :`<div class="card" style="max-width:360px;margin:30px auto"><h2>Iniciar sesión</h2><form onsubmit="doLogin(event)"><label>Usuario</label><input id="u" autocomplete="username" required><label>Contraseña</label><input id="pw" type="password" required><p class="er" id="msg"></p><button class="p">Ingresar</button> <button type="button" onclick="S.reg=true;render()">Registrarme como cliente</button></form></div>`;return}
+ const tabs=ORDER.filter(t=>S.perms[t]&&S.perms[t].includes('r')).concat('notificaciones',S.rol=='administrador'?['reportes']:[]);
+ const nav=tabs.map(t=>`<button class="${t==S.tab?'on':''}" onclick="S.tab='${t}';S.edit=null;render()">${ENT[t]?ENT[t].t:t[0].toUpperCase()+t.slice(1)}</button>`).join('');
+ $('#app').innerHTML=`<nav>${nav}</nav>`+(S.tab=='reportes'?rep():S.tab=='notificaciones'?noti():crud(S.tab))}
+function cv(f,r){const ty=f[2]||'text',v=r[f[0]];
+ if(ty.startsWith('ref:'))return lab(ty.slice(4),v);
+ if(ty.startsWith('multi:'))return(v||[]).map(i=>lab(ty.slice(6),i)).join(', ');
+ if(ty=='password')return'••••••';return v}
+function crud(t){const d=ENT[t],pm=S.perms[t]||'',rows=S.data[t]||[],isCli=S.rol=='cliente';
+ const fields=d.f.filter(f=>!(isCli&&f[4]=='cli')&&!(S.rol=='personal'&&t=='citas'&&f[0]!='estado'));
+ const rec=S.edit&&S.edit!='new'?rows.find(x=>x.id==S.edit)||{}:{};
+ const inp=f=>{const v=rec[f[0]]??'',ty=f[2]||'text',opt=f[3]?'':' required';
+  if(ty.startsWith('ref:'))return`<select name="${f[0]}"${f[3]=='opt'?'':' required'}><option value="">Seleccione…</option>${(S.data[ty.slice(4)]||[]).map(o=>`<option value="${o.id}" ${o.id==v?'selected':''}>${esc(lab(ty.slice(4),o.id))}</option>`).join('')}</select>`;
+  if(ty.startsWith('multi:'))return`<select name="${f[0]}" multiple>${(S.data[ty.slice(6)]||[]).map(o=>`<option value="${o.id}" ${(v||[]).includes(o.id)?'selected':''}>${esc(o.nombre)}</option>`).join('')}</select><span class="mu">Ctrl/Cmd + clic para varios</span>`;
+  if(ty.startsWith('sel:'))return`<select name="${f[0]}" required>${ty.slice(4).split(',').map(o=>`<option ${o==v?'selected':''}>${o}</option>`).join('')}</select>`;
+  const req=ty=='password'?(S.edit=='new'?' required':''):opt,dv=ty=='date'&&!v&&S.edit=='new'?new Date().toISOString().slice(0,10):v;
+  return`<input name="${f[0]}" type="${ty}" value="${ty=='password'?'':esc(dv)}"${req}${ty=='number'?' min="0"':''}>`};
+ const form=S.edit?`<div class="card"><h3>${S.edit=='new'?'Nuevo registro':'Editar registro'}</h3><form onsubmit="sv(event,'${t}')">${fields.map(f=>`<label>${f[1]}</label>${inp(f)}`).join('')}<p class="er" id="fe"></p><button class="p">Guardar</button> <button type="button" onclick="S.edit=null;render()">Cancelar</button></form></div>`:'';
+ const cols=d.f.filter(f=>f[2]!='password'&&!(isCli&&f[4]=='cli'&&t!='quejas'));
+ return`<div class="card"><div class="row"><h2 style="margin:0">${d.t}</h2>${pm.includes('c')?`<button class="p" onclick="S.edit='new';render()">+ Nuevo</button>`:''}</div>${form}<div class="tw"><table><tr>${cols.map(f=>`<th>${f[1]}</th>`).join('')}<th></th></tr>${rows.map(r=>`<tr>${cols.map(f=>`<td>${esc(cv(f,r))}</td>`).join('')}<td>${pm.includes('u')?`<button onclick="S.edit=${r.id};render()">Editar</button> `:''}${pm.includes('d')?`<button onclick="del('${t}',${r.id})">Eliminar</button>`:''}</td></tr>`).join('')||'<tr><td class="mu">Sin registros</td></tr>'}</table></div></div>`}
+async function sv(e,t){e.preventDefault();const fm=new FormData(e.target),b={};
+ for(const f of ENT[t].f){if(!fm.has(f[0]))continue;b[f[0]]=(f[2]||'').startsWith('multi:')?fm.getAll(f[0]).map(Number):fm.get(f[0])}
+ try{S.edit=='new'?await api(t,'POST',b):await api(t+'/'+S.edit,'PUT',b);
+  if(t=='citas'&&S.edit=='new')toast('✉ Notificación de confirmación y recordatorio generadas');
+  S.edit=null;await load();render()}catch(x){$('#fe').textContent=x.message}}
+async function del(t,id){if(!confirm('¿Eliminar este registro?'))return;
+ try{await api(t+'/'+id,'DELETE');await load();render()}catch(x){toast(x.message)}}
+function noti(){return`<div class="card"><h2>Notificaciones</h2><div class="tw"><table><tr><th>Fecha</th><th>Tipo</th><th>Mensaje</th></tr>${S.noti.map(n=>`<tr><td>${n.fecha}</td><td>${n.tipo}</td><td>${esc(n.mensaje)}</td></tr>`).join('')||'<tr><td class="mu">Sin notificaciones</td></tr>'}</table></div><p class="mu">Las notificaciones se registran en el sistema; no se envían por correo en esta versión.</p></div>`}
+function rep(){const r=S.rep;if(!r)return'<div class="card">No se pudo cargar el reporte.</div>';const T=r.totales;
+ const tb=(h,a,k)=>`<div class="card"><h3>${h}</h3><table>${a.map(x=>`<tr><td>${esc(x[k])}</td><td>${x.total}</td></tr>`).join('')||'<tr><td class="mu">Sin datos</td></tr>'}</table></div>`;
+ return`<div class="card"><h2>Reportes</h2><div class="k"><div><b>${T.clientes}</b>Clientes</div><div><b>${T.mascotas}</b>Mascotas</div><div><b>${T.citas}</b>Citas</div><div><b>${T.tratamientos}</b>Tratamientos</div><div><b>${T.quejas_abiertas}</b>Quejas abiertas</div></div></div><div class="grid2">${tb('Servicios prestados por tipo',r.servicios_prestados,'tipo')}${tb('Citas por estado',r.citas_por_estado,'estado')}${tb('Quejas por estado',r.quejas_por_estado,'estado')}${tb('Citas por profesional',r.citas_por_personal,'nombre')}</div>`}
+boot();
+</script></body></html>
